@@ -29,8 +29,14 @@ on:
         type: boolean
         default: true
 
+# One run of this bot at a time, repo-wide. Keying the group on the issue
+# number would put a scheduled sweep (where the number is empty) in a
+# different group from an event run for an issue that same sweep is
+# processing, so the two would run concurrently -- and the bot's
+# no-double-action guard is per-process, so neither can see the other.
+# A queued run that GitHub drops is picked up by the next sweep.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
@@ -43,6 +49,9 @@ jobs:
       contents: read
     uses: google/adk-samples/.github/workflows/go-spam-detection.yml@main
     with:
+      # Runs the bot code from the same adk-samples commit as the workflow
+      # above: the reusable workflow defaults samples_ref to its own
+      # job.workflow_sha, so pinning `uses:` below pins the Go code too.
       issue_number: ${{ github.event.issue.number || inputs.issue }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       issue_count: '3'
