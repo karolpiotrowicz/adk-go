@@ -37,6 +37,9 @@ jobs:
       contents: read
     uses: google/adk-samples/.github/workflows/go-stale-issues.yml@main
     with:
+      # Runs the bot code from the same adk-samples commit as the workflow
+      # above: the reusable workflow defaults samples_ref to its own
+      # job.workflow_sha, so pinning `uses:` below pins the Go code too.
       issue_number: ${{ inputs.issue }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       maintainers: 'wolo-lab,foxfrikses,dpasiukevich,hanorik,kdroste-google,jjsasha63,baptmont,karolpiotrowicz'
