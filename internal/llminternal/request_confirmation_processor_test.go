@@ -1154,3 +1154,90 @@ func TestRequestConfirmationFirstApprovalPlaceholderAfterRequest(t *testing.T) {
 		t.Errorf("first approval did not dispatch %q when the placeholder response follows the request", callID)
 	}
 }
+
+// TestRequestConfirmationResumeRequiresConfirmationCallName verifies that only a
+// call named toolconfirmation.FunctionCallName is resumed as a confirmation
+// request. A call with another name is not one, even when its ID matches the
+// user's confirmation response and its arguments include "originalFunctionCall".
+// The genuine request in the same event shows that resuming still works.
+func TestRequestConfirmationResumeRequiresConfirmationCallName(t *testing.T) {
+	originalCall := func(id string) map[string]any {
+		return map[string]any{"originalFunctionCall": map[string]any{"name": mockToolName, "args": map[string]any{"param1": "test"}, "id": id}}
+	}
+	approve := func(id string) *genai.Part {
+		return &genai.Part{FunctionResponse: &genai.FunctionResponse{Name: toolconfirmation.FunctionCallName, ID: id, Response: map[string]any{"confirmed": true}}}
+	}
+	events := []*session.Event{
+		{Author: "testAgent", LLMResponse: model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{
+			{FunctionCall: &genai.FunctionCall{Name: "other_tool", ID: "conf-1", Args: originalCall("call-1")}},
+			{FunctionCall: &genai.FunctionCall{Name: toolconfirmation.FunctionCallName, ID: "conf-2", Args: originalCall("call-2")}},
+		}}}},
+		{Author: "user", LLMResponse: model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{approve("conf-1"), approve("conf-2")}}}},
+	}
+	agnt, tools, err := newMockLlmAgent()
+	if err != nil {
+		t.Fatalf("error creating mock llmagent: %v", err)
+	}
+	ictx := createInvocationContext(t, agnt, &fakeSession{events: events})
+	var dispatched []string
+	for ev, err := range llminternal.RequestConfirmationRequestProcessor(ictx, &model.LLMRequest{}, &llminternal.Flow{Tools: tools}) {
+		if err != nil {
+			t.Fatalf("RequestConfirmationRequestProcessor() unexpected error: %v", err)
+		}
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionResponse != nil {
+				dispatched = append(dispatched, p.FunctionResponse.ID)
+			}
+		}
+	}
+	if diff := cmp.Diff([]string{"call-2"}, dispatched); diff != "" {
+		t.Errorf("RequestConfirmationRequestProcessor() dispatched call IDs mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestRequestConfirmationConflictCheckIgnoresOtherCallNames verifies that a call
+// with another name that shares a confirmation request's ID is not counted as a
+// conflicting confirmation request, so the approved request still resumes.
+func TestRequestConfirmationConflictCheckIgnoresOtherCallNames(t *testing.T) {
+	const confirmationID = "conf-1"
+	agentEvent := func(fc *genai.FunctionCall) *session.Event {
+		return &session.Event{Author: "testAgent", LLMResponse: model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{FunctionCall: fc}}}}}
+	}
+	events := []*session.Event{
+		agentEvent(&genai.FunctionCall{Name: toolconfirmation.FunctionCallName, ID: confirmationID, Args: map[string]any{
+			"originalFunctionCall": map[string]any{"name": mockToolName, "args": map[string]any{"param1": "test"}, "id": "call-1"},
+			"toolConfirmation":     toolconfirmation.ToolConfirmation{Hint: "h"},
+		}}),
+		agentEvent(&genai.FunctionCall{Name: "other_tool", ID: confirmationID, Args: map[string]any{
+			"originalFunctionCall": map[string]any{"name": mockToolName, "args": map[string]any{"param1": "other"}, "id": "call-2"},
+		}}),
+		{Author: "user", LLMResponse: model.LLMResponse{Content: &genai.Content{Parts: []*genai.Part{{FunctionResponse: &genai.FunctionResponse{
+			Name: toolconfirmation.FunctionCallName, ID: confirmationID, Response: map[string]any{"confirmed": true},
+		}}}}}},
+	}
+	agnt, tools, err := newMockLlmAgent()
+	if err != nil {
+		t.Fatalf("error creating mock llmagent: %v", err)
+	}
+	ictx := createInvocationContext(t, agnt, &fakeSession{events: events})
+	var dispatched []string
+	for ev, err := range llminternal.RequestConfirmationRequestProcessor(ictx, &model.LLMRequest{}, &llminternal.Flow{Tools: tools}) {
+		if err != nil {
+			t.Fatalf("RequestConfirmationRequestProcessor() unexpected error: %v", err)
+		}
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, p := range ev.Content.Parts {
+			if p.FunctionResponse != nil {
+				dispatched = append(dispatched, p.FunctionResponse.ID)
+			}
+		}
+	}
+	if diff := cmp.Diff([]string{"call-1"}, dispatched); diff != "" {
+		t.Errorf("RequestConfirmationRequestProcessor() dispatched call IDs mismatch (-want +got):\n%s", diff)
+	}
+}

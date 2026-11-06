@@ -152,6 +152,12 @@ func RequestConfirmationRequestProcessor(ctx agent.InvocationContext, req *model
 				continue
 			}
 			for _, functionCall := range utils.FunctionCalls(event.Content) {
+				// Use the same name check as the resume loop below, so that a
+				// call the loop never resumes cannot mark a confirmation as
+				// conflicting.
+				if functionCall.Name != toolconfirmation.FunctionCallName {
+					continue
+				}
 				if _, ok := confirmationResponses[functionCall.ID]; !ok {
 					continue
 				}
@@ -200,6 +206,12 @@ func RequestConfirmationRequestProcessor(ctx agent.InvocationContext, req *model
 			var resumeOrder []string
 			confirmationIDByCallID := map[string]string{}
 			for _, functionCall := range calls {
+				// Only a call named adk_request_confirmation is a confirmation
+				// request. A call with any other name is never resumed here,
+				// whatever its ID or arguments.
+				if functionCall.Name != toolconfirmation.FunctionCallName {
+					continue
+				}
 				confirmation, ok := confirmationResponses[functionCall.ID]
 				if !ok {
 					continue
